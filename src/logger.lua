@@ -22,7 +22,7 @@ end
 function read_auth()
   vid = tostring(proxy.connection.server.mysqld_version)
   version = vid:sub(1, 1) .. '.' .. vid:sub(3, 3) .. '.' .. vid:sub(4)
-  log_other('CONNECT', version .. ', ' .. proxy.connection.client.username .. ', ' .. proxy.connection.client.default_db)  
+  log_other('CONNECT', version .. ', ' .. proxy.connection.client.username .. ', ' .. proxy.connection.client.default_db)
 end
 
 function read_query(packet)
@@ -36,8 +36,9 @@ function read_query(packet)
     message = 'INIT DB'
     data = packet:sub(2)
   elseif type == proxy.COM_QUERY then
+    message = 'QUERY'
     query = trim(packet:sub(2):gsub("[\n][ \t]+", "\n  "))
-    log_query(query)
+    log_query(message, query)
     if query:sub(0, 6) == 'SELECT' then
       id = 1
     elseif query:sub(0, 6) == 'INSERT' or query:sub(0, 7) == 'REPLACE' then
@@ -55,7 +56,7 @@ function read_query(packet)
     message = 'CREATE DB'
     data = packet:sub(2)
   elseif type == proxy.COM_DROP_DB then
-    message = 'DROP_DB'
+    message = 'DROP DB'
     data = packet:sub(2)
   elseif type == proxy.COM_REFRESH then
     message = 'REFRESH'
@@ -80,14 +81,43 @@ function read_query(packet)
   elseif type == proxy.COM_CHANGE_USER then
     message = 'CHANGE USER'
     data = packet:sub(2)
+  elseif type == proxy.COM_BINLOG_DUMP then
+    message = 'BINLOG DUMP'
+  elseif type == proxy.COM_TABLE_DUMP then
+    message = 'TABLE DUMP'
+  elseif type == proxy.COM_CONNECT_OUT then
+    message = 'CONNECT OUT'
+  elseif type == proxy.COM_REGISTER_SLAVE then
+    message = 'REGISTER SLAVE'
+  elseif type == proxy.COM_STMT_PREPARE then
+    message = 'STMT PREPARE'
+    query = trim(packet:sub(2):gsub("[\n][ \t]+", "\n  "))
+    log_query(message, query)
+  elseif type == proxy.COM_STMT_EXECUTE then
+    message = 'STMT EXECUTE'
+  elseif type == proxy.COM_STMT_SEND_LONG_DATA then
+    message = 'STMT SEND LONG DATA'
+  elseif type == proxy.COM_STMT_CLOSE then
+    message = 'STMT CLOSE'
+  elseif type == proxy.COM_STMT_RESET then
+    message = 'STMT RESET'
+  elseif type == proxy.COM_SET_OPTION then
+    message = 'SET OPTION'
+  elseif type == proxy.COM_STMT_FETCH then
+    message = 'STMT FETCH'
   elseif type == proxy.COM_RESET_CONNECTION then
     message = 'RESET CONNECTION'
   elseif type == proxy.COM_DAEMON then
     message = 'DAEMON'
+  elseif type == proxy.COM_ERROR then
+    message = 'ERROR'
   else
     message = 'UNKNOWN'
   end
-  log_other(message, data)
+  err = pcall(log_other(message, data))
+  if err then
+    print(err.code)
+  end
 end
 
 function read_query_result(response)
@@ -104,9 +134,9 @@ function read_query_result(response)
   print(message)
 end
 
-function log_query(query)
+function log_query(message, query)
   date = os.date('%Y-%m-%d %H:%M:%S')
-  print(date .. ansicolors.yellow .. ' [QUERY]' .. ansicolors.reset .. '\n  ' .. highlightQuery(query))
+  print(date .. ansicolors.yellow .. ' [' .. message .. ']' .. ansicolors.reset .. '\n  ' .. highlightQuery(query))
   output = date .. '\n  ' .. query .. ';'
   log(output)
 end
@@ -136,10 +166,10 @@ function log(line)
 end
 
 function highlightQuery(sql)
-  sql = sql:gsub('[^,. \t\n\r()\\\\*/+-%&|<>=]+', function (word) 
+  sql = sql:gsub('[^,. \t\n\r()\\\\*/+-%&|<>=]+', function (word)
     return hightlightWord(word)
   end)
-  --sql = sql:gsub('[\'"][^\'"]*[\'"]', function (word) 
+  --sql = sql:gsub('[\'"][^\'"]*[\'"]', function (word)
   --  return word:gsub('%c[', '')
   --end)
   --return sql:gsub('[\'"][^\'"]*[\'"]', function (string)
