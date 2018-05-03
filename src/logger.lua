@@ -1,7 +1,17 @@
 -- package.path = package.path .. ';C:\\bin'
 require("ansicolors")
 
-local schar = string.char
+function string.fromHex(str)
+  return (str:gsub('..', function (cc)
+    return string.char(tonumber(cc, 16))
+  end))
+end
+
+function string.toHex(str)
+  return (str:gsub('.', function (c)
+    return string.format('%02X', string.byte(c))
+  end))
+end
 
 function s(n)
   if n == 0 or n > 1 then
@@ -20,14 +30,17 @@ function connect_server()
 end
 
 function read_auth()
-  vid = tostring(proxy.connection.server.mysqld_version)
-  version = vid:sub(1, 1) .. '.' .. vid:sub(3, 3) .. '.' .. vid:sub(4)
+  local vid = tostring(proxy.connection.server.mysqld_version)
+  local version = vid:sub(1, 1) .. '.' .. vid:sub(3, 3) .. '.' .. vid:sub(4)
   log_other('CONNECT', version .. ', ' .. proxy.connection.client.username .. ', ' .. proxy.connection.client.default_db)
 end
 
 function read_query(packet)
-  type = packet:byte()
-  data = ''
+  local type = packet:byte()
+  local data = ''
+  local message
+  local query, id
+
   if type == proxy.COM_SLEEP then
     message = 'SLEEP'
   elseif type == proxy.COM_QUIT then
@@ -38,17 +51,22 @@ function read_query(packet)
   elseif type == proxy.COM_QUERY then
     message = 'QUERY'
     query = trim(packet:sub(2):gsub("[\n][ \t]+", "\n  "))
-    log_query(message, query)
-    if query:sub(0, 6) == 'SELECT' then
+    local init = query:sub(0, 6):upper();
+    if init == 'SELECT' then
       id = 1
-    elseif query:sub(0, 6) == 'INSERT' or query:sub(0, 7) == 'REPLACE' then
+    elseif init == 'INSERT' or init == 'REPLAC' then
       id = 2
-    elseif query:sub(0, 6) == 'UPDATE' or query:sub(0, 6) == 'DELETE' then
+    elseif init == 'UPDATE' or init == 'DELETE' then
       id = 3
     else
       id = 0
     end
-    proxy.queries:append(id, packet, {resultset_is_needed = true})
+
+    log_query(message, query)
+
+    if init == 'SELECT' then
+      proxy.queries:append(id, packet, {resultset_is_needed = true})
+    end
     return proxy.PROXY_SEND_QUERY
   elseif type == proxy.COM_FIELD_LIST then
     message = 'FIELD LIST'
@@ -114,14 +132,15 @@ function read_query(packet)
   else
     message = 'UNKNOWN'
   end
-  err = pcall(log_other(message, data))
+
+  local err = pcall(log_other(message, data))
   if err then
     print(err.code)
   end
 end
 
 function read_query_result(response)
-  message = '  (' .. (response.query_time / 1000) .. ' ms'
+  local message = '  (' .. (response.query_time / 1000) .. ' ms'
   if response.id == 1 then
     message = message .. ', ' .. response.resultset.row_count .. ' row' .. s(response.resultset.row_count)
   elseif response.id == 2 then
@@ -135,16 +154,16 @@ function read_query_result(response)
 end
 
 function log_query(message, query)
-  date = os.date('%Y-%m-%d %H:%M:%S')
+  local date = os.date('%Y-%m-%d %H:%M:%S')
   print(date .. ansicolors.yellow .. ' [' .. message .. ']' .. ansicolors.reset .. '\n  ' .. highlightQuery(query))
-  output = date .. '\n  ' .. query .. ';'
+  local output = date .. '\n  ' .. query .. ';'
   log(output)
 end
 
 function log_other(message, data)
-  date = os.date('%Y-%m-%d %H:%M:%S')
-  text = ' [' .. message .. ']'
-  output = date .. text
+  local date = os.date('%Y-%m-%d %H:%M:%S')
+  local text = ' [' .. message .. ']'
+  local output = date .. text
   if data == '' then
     if message == 'QUIT' then
       print(date .. ansicolors.yellow .. text .. ansicolors.reset .. ' ----------------------------------------------------\n')
@@ -166,9 +185,15 @@ function log(line)
 end
 
 function highlightQuery(sql)
+  sql = sql:gsub("'(\\0.[^']+)'", function (value)
+    value = value:gsub('\\0', string.char(0));
+    return "X'" .. string.toHex(value) .. "'";
+  end)
+
   sql = sql:gsub('[^,. \t\n\r()\\\\*/+-%&|<>=]+', function (word)
     return hightlightWord(word)
   end)
+
   --sql = sql:gsub('[\'"][^\'"]*[\'"]', function (word)
   --  return word:gsub('%c[', '')
   --end)
@@ -179,7 +204,7 @@ function highlightQuery(sql)
 end
 
 function hightlightWord(word)
-  words = {
+  local words = {
     -- transactions
     BEGIN = 0, START = 0, COMMIT = 0, ROLLBACK = 0, TRANSACTION = 0, RELEASE = 0, TO = 0, SAVEPOINT = 0, LOCK = 0, UNLOCK = 0, UNDO = 0, ISOLATION = 0, XA = 0,
 
@@ -196,7 +221,7 @@ function hightlightWord(word)
     SHUTDOWN = 1, SERVER = 1, CHANGE = 1, STOP = 1, MASTER = 1, SLAVE = 1, HOSTS = 1, REPLICATION = 1, FILTER = 1, SQL_SLAVE_SKIP_COUNTER = 1, SQL_LOG_BIN = 1,
     INSTALL = 1, UNINSTALL = 1, PLUGIN = 1,
 
-    -- querries
+    -- queries
     SELECT = 1, INSERT = 1, REPLACE = 1, UPDATE = 1, DELETE = 1, TRUNCATE = 1, SET = 1, DO = 1, CALL = 1, LOAD = 1, USE = 1, DELIMITER = 1,
     UNION = 1, INTERSECT = 1, EXCEPT = 1, WITH = 1, RECURSIVE = 1,
     INTO = 1, OUTFILE = 1, INFILE = 1, NAMES = 1, LINES = 1, OPTIONALLY = 1, TERMINATED = 1, ENCLOSED = 1, ESCAPED = 1,
@@ -211,7 +236,7 @@ function hightlightWord(word)
     -- procedures
     CASE = 1, WHEN = 1, IF = 1, IFNULL = 1, NULLIF = 1, THEN = 1, ELSE = 1, ELSEIF = 1, END = 1, RETURN = 1, LEAVE = 1, EXIT = 1,
       UNTIL = 1, WHILE = 1, CONDITION = 1, EACH = 1, LOOP = 1,
-    FUNCTION = 1, PROCERURE = 1, OUT = 1, INOUT = 1, READS = 1, MODIFIES = 1, SQL = 1, DATA = 1, DETERMINISTIC = 1, DEFINER = 1, RETURNS = 1, CHARSET = 1,
+    FUNCTION = 1, PROCEDURE = 1, OUT = 1, INOUT = 1, READS = 1, MODIFIES = 1, SQL = 1, DATA = 1, DETERMINISTIC = 1, DEFINER = 1, RETURNS = 1, CHARSET = 1,
     DECLARE = 1, CONTINUE = 1, HANDLER = 1, FOR = 1, FOUND = 1, CURSOR = 1, OPEN = 1, CLOSE = 1, ITERATE = 1, REPEAT = 1,
     RAISE = 1, IGNORE = 1, ABORT = 1, FAIL = 1, SIGNAL = 1, RESIGNAL = 1, SQLSTATE = 1, SQLEXCEPTION = 1, SQLWARNING = 1, DIAGNOSTICS = 1, ANALYSE = 1,
 
@@ -253,7 +278,7 @@ function hightlightWord(word)
       TO_SECONDS = 6, UNIX_TIMESTAMP = 6, WEEK = 6, WEEKDAY = 6, WEEKOFYEAR = 6, YEAR = 6, YEARWEEK = 6,
     INTERVAL = 6, DAY_HOUR = 6, DAY_MICROSECOND = 6, DAY_MINUTE = 6, DAY_SECOND = 6, HOUR_MICROSECOND = 6, HOUR_MINUTE = 6,
       HOUR_SECOND = 6, MINUTE_MICROSECOND = 6, MINUTE_SECOND = 6, SECOND_MICROSECOND = 6, YEAR_MONTH = 6,
-    -- encyption
+    -- encryption
     AES_DECRYPT = 6, AES_ENCRYPT = 6, COMPRESS = 6, DECODE = 6, ENCODE = 6, MD5 = 6, OLD_PASSWORD = 6, RANDOM_BYTES = 6, SHA1 = 6, SHA2 = 6,
       UNCOMPRESS = 6, UNCOMPRESSED_LENGTH = 6, VALIDATE_PASSWORD_STRENGTH = 6,
       ASYMMETRIC_DECRYPT = 6, ASYMMETRIC_DERIVE = 6, ASYMMETRIC_ENCRYPT = 6, ASYMMETRIC_SIGN = 6, ASYMMETRIC_VERIFY = 6, CREATE_ASYMMETRIC_PRIV_KEY = 6, CREATE_ASYMMETRIC_PUB_KEY = 6,
@@ -289,14 +314,16 @@ function hightlightWord(word)
       MPOINTFROMTEXT = 6, ST_MPOINTFROMTEXT = 6, MPOLYFROMTEXT = 6, ST_MPOLYFROMTEXT = 6, POINTFROMTEXT = 6, ST_POINTFROMTEXT = 6, POLYFROMTEXT = 6, ST_POLYFROMTEXT = 6,
   }
 
-  if word:match('^[%d.]+$') or words[word] == 3 then
-    return ansicolors.red .. word .. ansicolors.reset
-  elseif words[word] == 0 then
-    return ansicolors.cyan .. ansicolors.bright .. word .. ansicolors.reset
-  elseif words[word] == 1 or words[word] == 2 then
-    return ansicolors.cyan .. word .. ansicolors.reset
-  elseif words[word] == 5 or words[word] == 6 or words[word] == 7 then
-    return ansicolors.cyan .. word .. ansicolors.reset
+  local upper = word:upper();
+
+  if word:match('^[%d.]+$') or words[upper] == 3 then
+    return ansicolors.red .. upper .. ansicolors.reset
+  elseif words[upper] == 0 then
+    return ansicolors.cyan .. ansicolors.bright .. upper .. ansicolors.reset
+  elseif words[upper] == 1 or words[upper] == 2 then
+    return ansicolors.cyan .. upper .. ansicolors.reset
+  elseif words[upper] == 5 or words[upper] == 6 or words[upper] == 7 then
+    return ansicolors.cyan .. upper .. ansicolors.reset
   else
     return ansicolors.black .. ansicolors.bright .. word .. ansicolors.reset
   end
